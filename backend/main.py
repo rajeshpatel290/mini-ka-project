@@ -9,7 +9,7 @@ from io import BytesIO
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from src import config
 from src.case_id import CaseIdGenerationError, generate_case_id
@@ -35,6 +35,14 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.vercel\.app",
     expose_headers=["X-Original-Hash", "X-Tampered-Hash", "X-Original-Filename", "Content-Disposition"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
 
 
 def sha256_bytes(content: bytes) -> str:

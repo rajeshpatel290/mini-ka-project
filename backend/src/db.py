@@ -61,7 +61,10 @@ class SupabaseEvidenceRepository:
         except ImportError as exc:
             raise SupabaseConfigError("Install supabase first: pip install -r requirements.txt") from exc
 
-        self.client = create_client(url, key)
+        try:
+            self.client = create_client(url, key)
+        except Exception as exc:
+            raise SupabaseConfigError(f"Supabase client initialization failed: {exc}") from exc
 
     def exists(self, case_id: str) -> bool:
         return self.fetch(case_id) is not None
