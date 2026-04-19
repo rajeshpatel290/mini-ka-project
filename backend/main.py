@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import tempfile
 from datetime import datetime, timezone
-from io import BytesIO
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from src import config
 from src.case_id import CaseIdGenerationError, generate_case_id
@@ -58,11 +59,47 @@ def repository_dependency():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-async def read_upload(file: UploadFile) -> bytes:
-    content = await file.read()
-    if not content:
+async def sha256_upload(file: UploadFile) -> str:
+    digest = hashlib.sha256()
+    total_bytes = 0
+
+    while True:
+        chunk = await file.read(config.CHUNK_SIZE)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        digest.update(chunk)
+
+    if total_bytes == 0:
         raise HTTPException(status_code=400, detail="Uploaded file must not be empty")
-    return content
+
+    return digest.hexdigest()
+
+
+async def tamper_upload(file: UploadFile) -> tuple[tempfile.SpooledTemporaryFile[bytes], str, str]:
+    original_digest = hashlib.sha256()
+    tampered_digest = hashlib.sha256()
+    total_bytes = 0
+    output = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024, mode="w+b")
+
+    while True:
+        chunk = await file.read(config.CHUNK_SIZE)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        original_digest.update(chunk)
+        tampered_digest.update(chunk)
+        output.write(chunk)
+
+    if total_bytes == 0:
+        output.close()
+        raise HTTPException(status_code=400, detail="Uploaded file must not be empty")
+
+    tamper_bytes = secrets.token_bytes(secrets.randbelow(9) + 8)
+    tampered_digest.update(tamper_bytes)
+    output.write(tamper_bytes)
+    output.seek(0)
+    return output, original_digest.hexdigest(), tampered_digest.hexdigest()
 
 
 def filename_for(file: UploadFile) -> str:
@@ -74,7 +111,7 @@ def health() -> dict[str, str]:
     return {
         "status": "ok",
         "backend": "supabase",
-        "app_version": "cors-vercel-mini-2026-04-20",
+        "app_version": "supabase-streaming-2026-04-20",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -85,8 +122,7 @@ async def register_evidence(
     case_name: str = Form(...),
     repository=Depends(repository_dependency),
 ) -> dict[str, str | None]:
-    content = await read_upload(file)
-    file_hash = sha256_bytes(content)
+    file_hash = await sha256_upload(file)
     try:
         case_id = generate_case_id(case_name, repository)
         record = repository.insert(
@@ -116,12 +152,14 @@ async def verify_evidence(
     case_id: str = Form(...),
     repository=Depends(repository_dependency),
 ) -> dict[str, str | None]:
-    record = repository.fetch(case_id)
+    try:
+        record = repository.fetch(case_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="case_id not found")
 
-    content = await read_upload(file)
-    submitted_hash = sha256_bytes(content)
+    submitted_hash = await sha256_upload(file)
     status = "INTACT" if submitted_hash == record.file_hash else "TAMPERED"
     return {
         "case_id": record.case_id,
@@ -135,14 +173,15 @@ async def verify_evidence(
 
 @app.post("/evidence/tamper")
 async def tamper_evidence(file: UploadFile = File(...)) -> StreamingResponse:
-    content = await read_upload(file)
-    original_hash = sha256_bytes(content)
-    corrupted = content + secrets.token_bytes(secrets.randbelow(9) + 8)
-    tampered_hash = sha256_bytes(corrupted)
+    corrupted_file, original_hash, tampered_hash = await tamper_upload(file)
     original_filename = filename_for(file)
     download_name = f"tampered_{original_filename}"
 
-    response = StreamingResponse(BytesIO(corrupted), media_type=file.content_type or "application/octet-stream")
+    response = StreamingResponse(
+        corrupted_file,
+        media_type=file.content_type or "application/octet-stream",
+        background=BackgroundTask(corrupted_file.close),
+    )
     response.headers["X-Original-Hash"] = original_hash
     response.headers["X-Tampered-Hash"] = tampered_hash
     response.headers["X-Original-Filename"] = original_filename

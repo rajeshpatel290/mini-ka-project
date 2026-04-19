@@ -91,7 +91,7 @@ API endpoints:
 - `GET /evidence/list`
 - `GET /evidence/{case_id}`
 
-The API stores only hashes and metadata in Supabase. Uploaded files are not permanently stored.
+The API stores only hashes and metadata in Supabase. Uploaded files are not permanently stored. Register and verify hash uploaded files in chunks, so images and larger evidence files do not need to be loaded fully into memory.
 
 ## Static Frontend
 
@@ -104,10 +104,10 @@ D:\mini\frontend\index.html
 The frontend uses this backend URL at the top of its script:
 
 ```js
-const API_URL = "http://localhost:8000";
+const API_URL = "https://startup-suggest-name-1.onrender.com";
 ```
 
-For production, change that value to your Render backend URL before deploying the file. You can deploy it by dragging `frontend\index.html` into Vercel.
+For local-only testing, temporarily change that value to `http://localhost:8000`. You can deploy the frontend by dragging `frontend\index.html` into Vercel.
 
 Example API flow with PowerShell:
 
@@ -189,7 +189,7 @@ If Ganache, Web3.py, or the contract address is unavailable and `EVIDENCE_BACKEN
 - `GANACHE_URL`: local Ethereum RPC URL, default `http://127.0.0.1:7545`
 - `EVIDENCE_CONTRACT_ADDRESS`: deployed `EvidenceLedger` address for Web3 mode
 - `SUPABASE_URL`: Supabase project URL for the FastAPI backend
-- `SUPABASE_KEY`: Supabase anon or service-role key for the FastAPI backend
+- `SUPABASE_KEY`: Supabase API key for the FastAPI backend
 - `FRONTEND_URL`: deployed frontend origin for CORS
 
 ## Render Deployment
@@ -219,6 +219,14 @@ SUPABASE_URL
 SUPABASE_KEY
 FRONTEND_URL
 ```
+
+Set `FRONTEND_URL` to your Vercel frontend URL, for example:
+
+```text
+https://mini-ka-project.vercel.app
+```
+
+Use the Supabase API key format supported by your Supabase project/client version, then redeploy Render after saving environment variable changes.
 
 ## Scope Notes
 

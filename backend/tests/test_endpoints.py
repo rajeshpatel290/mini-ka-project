@@ -48,17 +48,21 @@ def test_health() -> None:
 def test_vercel_origin_is_allowed_by_cors() -> None:
     client = TestClient(app)
 
-    response = client.options(
-        "/evidence/register",
-        headers={
-            "Origin": "https://blockchain-eta-taupe.vercel.app",
-            "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "content-type",
-        },
-    )
+    for origin in [
+        "https://blockchain-eta-taupe.vercel.app",
+        "https://mini-ka-project.vercel.app",
+    ]:
+        response = client.options(
+            "/evidence/register",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://blockchain-eta-taupe.vercel.app"
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
 
 
 def test_register_returns_generated_case_id_and_metadata() -> None:
