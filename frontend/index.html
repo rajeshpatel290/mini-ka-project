@@ -92,8 +92,7 @@
       font-weight: 650;
     }
 
-    input[type="text"],
-    input[type="file"] {
+    input[type="text"] {
       width: 100%;
       min-height: 44px;
       padding: 10px 12px;
@@ -102,20 +101,6 @@
       background: #101010;
       color: var(--text);
       font: inherit;
-    }
-
-    input[type="file"] {
-      padding: 9px 12px;
-    }
-
-    input::file-selector-button {
-      margin-right: 12px;
-      padding: 7px 10px;
-      border: 0;
-      border-radius: 8px;
-      background: #333;
-      color: var(--text);
-      cursor: pointer;
     }
 
     button {
@@ -142,10 +127,12 @@
 
     .drop-zone {
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 64px;
-      padding: 14px;
+      gap: 10px;
+      min-height: 96px;
+      padding: 18px;
       border: 2px dashed #444;
       border-radius: 8px;
       background: #101010;
@@ -153,7 +140,6 @@
       font-size: 0.88rem;
       font-weight: 400;
       text-align: center;
-      cursor: default;
       transition: border-color 0.15s, background 0.15s, color 0.15s;
       user-select: none;
     }
@@ -162,6 +148,19 @@
       border-color: var(--blue);
       background: rgba(37, 99, 235, 0.08);
       color: var(--text);
+    }
+
+    .drop-zone .choose-btn {
+      justify-self: unset;
+      min-height: 36px;
+      padding: 7px 14px;
+      background: #333;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    .drop-zone .choose-btn:hover:not(:disabled) {
+      background: #444;
     }
 
     .file-count {
@@ -347,8 +346,11 @@
         </label>
         <label>
           Evidence file(s)
-          <input id="register-file" type="file" multiple>
-          <div class="drop-zone" id="register-drop-zone">Drag a folder or extra files here</div>
+          <div class="drop-zone" id="register-drop-zone">
+            <span id="register-drop-label">Drag files or a folder here</span>
+            <button type="button" class="choose-btn" id="register-choose-btn">Choose Files</button>
+            <input id="register-file" type="file" multiple style="display:none">
+          </div>
           <span id="register-file-count" class="file-count"></span>
         </label>
         <button id="register-button" type="submit">Register Evidence</button>
@@ -366,8 +368,11 @@
         </label>
         <label>
           Evidence file(s)
-          <input id="verify-file" type="file" multiple>
-          <div class="drop-zone" id="verify-drop-zone">Drag a folder or extra files here</div>
+          <div class="drop-zone" id="verify-drop-zone">
+            <span id="verify-drop-label">Drag files or a folder here</span>
+            <button type="button" class="choose-btn" id="verify-choose-btn">Choose Files</button>
+            <input id="verify-file" type="file" multiple style="display:none">
+          </div>
           <span id="verify-file-count" class="file-count"></span>
         </label>
         <button id="verify-button" type="submit">Verify Evidence</button>
@@ -381,8 +386,11 @@
       <form id="tamper-form">
         <label>
           File(s) to corrupt
-          <input id="tamper-file" type="file" multiple>
-          <div class="drop-zone" id="tamper-drop-zone">Drag a folder or extra files here</div>
+          <div class="drop-zone" id="tamper-drop-zone">
+            <span id="tamper-drop-label">Drag files or a folder here</span>
+            <button type="button" class="choose-btn" id="tamper-choose-btn">Choose Files</button>
+            <input id="tamper-file" type="file" multiple style="display:none">
+          </div>
           <span id="tamper-file-count" class="file-count"></span>
         </label>
         <button id="tamper-button" type="submit">Corrupt This File</button>
@@ -416,16 +424,23 @@
     function setupSection(section) {
       const fileInput = document.getElementById(`${section}-file`);
       const dropZone = document.getElementById(`${section}-drop-zone`);
+      const dropLabel = document.getElementById(`${section}-drop-label`);
+      const chooseBtn = document.getElementById(`${section}-choose-btn`);
       const countEl = document.getElementById(`${section}-file-count`);
+
+      chooseBtn.addEventListener("click", () => fileInput.click());
 
       function applyItems(items) {
         fileState[section] = items;
         if (items.length === 0) {
           countEl.textContent = "";
+          dropLabel.textContent = "Drag files or a folder here";
         } else if (items.length === 1) {
           countEl.textContent = items[0].path;
+          dropLabel.textContent = items[0].path;
         } else {
           countEl.textContent = `${items.length} files selected`;
+          dropLabel.textContent = `${items.length} files selected`;
         }
       }
 
@@ -451,13 +466,12 @@
       dropZone.addEventListener("drop", async e => {
         e.preventDefault();
         dropZone.classList.remove("drag-over");
-        dropZone.textContent = "Reading\u2026";
+        dropLabel.textContent = "Reading\u2026";
         try {
           const items = await readDroppedItems(e.dataTransfer);
           applyItems(items);
-          dropZone.textContent = "Drag a folder or extra files here";
         } catch {
-          dropZone.textContent = "Drag a folder or extra files here";
+          dropLabel.textContent = "Drag files or a folder here";
         }
       });
     }
@@ -535,15 +549,47 @@
     // producing a byte-for-byte identical archive across sessions.
     // ---------------------------------------------------------------------------
 
-    async function buildFilePayload(items) {
-      if (items.length === 1) return items[0].file;
+    // OS-generated files that change on their own (thumbnails, metadata caches).
+    // Excluding them prevents false TAMPERED results.
+    const SYSTEM_FILE_NAMES = new Set([
+      "thumbs.db", "desktop.ini", ".ds_store", ".localized",
+      "folder.jpg", "albumartsmall.jpg", "ehthumbs.db", "ehthumbs_vista.db",
+    ]);
 
-      const sorted = [...items].sort((a, b) => a.path.localeCompare(b.path));
+    function isSystemFile(path) {
+      const parts = path.split("/");
+      const name = parts[parts.length - 1].toLowerCase();
+      // Skip Windows/macOS OS metadata files and macOS __MACOSX entries
+      return SYSTEM_FILE_NAMES.has(name) || name.startsWith("._") || parts[0] === "__MACOSX";
+    }
+
+    // Strip the common top-level folder prefix so that dragging "FolderA/file.jpg"
+    // and choosing "file.jpg" directly both produce the same ZIP internal path.
+    function normalizeItemPaths(items) {
+      if (items.length === 0) return items;
+      const firstSlash = items[0].path.indexOf("/");
+      if (firstSlash === -1) return items; // top-level files, no prefix
+      const prefix = items[0].path.substring(0, firstSlash + 1);
+      if (items.every(i => i.path.startsWith(prefix))) {
+        return items.map(i => ({ ...i, path: i.path.substring(prefix.length) }));
+      }
+      return items;
+    }
+
+    async function buildFilePayload(items) {
+      // Filter OS-generated noise before hashing
+      const filtered = items.filter(i => !isSystemFile(i.path));
+      const normalized = normalizeItemPaths(filtered);
+
+      if (normalized.length === 1) return normalized[0].file;
+      if (normalized.length === 0) throw new Error("No valid files remain after filtering system files.");
+
+      const sorted = [...normalized].sort((a, b) => a.path.localeCompare(b.path));
       const zip = new JSZip();
       for (const { file, path } of sorted) {
         zip.file(path, await file.arrayBuffer(), { compression: "STORE", date: new Date(0) });
       }
-      const blob = await zip.generateAsync({ type: "blob" });
+      const blob = await zip.generateAsync({ type: "blob", comment: "" });
       return new File([blob], "evidence_bundle.zip", { type: "application/zip" });
     }
 
