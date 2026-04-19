@@ -67,36 +67,45 @@ class SupabaseEvidenceRepository:
         return self.fetch(case_id) is not None
 
     def insert(self, record: EvidenceRecord) -> EvidenceRecord:
-        result = (
-            self.client.table("records")
-            .insert(record.to_insert_payload())
-            .execute()
-        )
+        try:
+            result = (
+                self.client.table("records")
+                .insert(record.to_insert_payload())
+                .execute()
+            )
+        except Exception as exc:
+            raise SupabaseRepositoryError(f"Supabase insert failed: {exc}") from exc
         rows = _extract_rows(result)
         if not rows:
             raise SupabaseRepositoryError("Supabase insert returned no record")
         return EvidenceRecord.from_row(rows[0])
 
     def fetch(self, case_id: str) -> EvidenceRecord | None:
-        result = (
-            self.client.table("records")
-            .select("*")
-            .eq("case_id", case_id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            result = (
+                self.client.table("records")
+                .select("*")
+                .eq("case_id", case_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            raise SupabaseRepositoryError(f"Supabase fetch failed: {exc}") from exc
         rows = _extract_rows(result)
         if not rows:
             return None
         return EvidenceRecord.from_row(rows[0])
 
     def list_records(self) -> list[EvidenceRecord]:
-        result = (
-            self.client.table("records")
-            .select("case_id, original_filename, timestamp, file_hash, submitter")
-            .order("timestamp", desc=True)
-            .execute()
-        )
+        try:
+            result = (
+                self.client.table("records")
+                .select("case_id, original_filename, timestamp, file_hash, submitter")
+                .order("timestamp", desc=True)
+                .execute()
+            )
+        except Exception as exc:
+            raise SupabaseRepositoryError(f"Supabase list failed: {exc}") from exc
         return [EvidenceRecord.from_row(row) for row in _extract_rows(result)]
 
 
@@ -124,4 +133,3 @@ def get_repository() -> SupabaseEvidenceRepository:
 def reset_repository_cache() -> None:
     global _repository
     _repository = None
-

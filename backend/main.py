@@ -18,7 +18,10 @@ from src.db import EvidenceRecord, SupabaseConfigError, SupabaseRepositoryError,
 
 app = FastAPI(title="Digital Evidence Integrity API", version="1.0.0")
 
-cors_origins = ["http://localhost:5173"]
+cors_origins = [
+    "http://localhost:5173",
+    "https://blockchain-eta-taupe.vercel.app",
+]
 if config.FRONTEND_URL:
     cors_origins.append(config.FRONTEND_URL)
 
@@ -28,6 +31,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     expose_headers=["X-Original-Hash", "X-Tampered-Hash", "X-Original-Filename", "Content-Disposition"],
 )
 
@@ -40,6 +44,8 @@ def repository_dependency():
     try:
         return get_repository()
     except SupabaseConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except SupabaseRepositoryError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -136,7 +142,10 @@ async def tamper_evidence(file: UploadFile = File(...)) -> StreamingResponse:
 
 @app.get("/evidence/list")
 def list_evidence(repository=Depends(repository_dependency)) -> dict[str, object]:
-    records = repository.list_records()
+    try:
+        records = repository.list_records()
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     items = [
         {
             "case_id": record.case_id,
@@ -150,7 +159,10 @@ def list_evidence(repository=Depends(repository_dependency)) -> dict[str, object
 
 @app.get("/evidence/{case_id}")
 def get_evidence(case_id: str, repository=Depends(repository_dependency)) -> dict[str, str | None]:
-    record = repository.fetch(case_id)
+    try:
+        record = repository.fetch(case_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="case_id not found")
     return record.to_api_dict()
