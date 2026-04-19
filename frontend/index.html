@@ -140,30 +140,28 @@
       cursor: not-allowed;
     }
 
-    .file-picker {
+    .drop-zone {
       display: flex;
-      gap: 8px;
-      align-items: stretch;
+      align-items: center;
+      justify-content: center;
+      min-height: 64px;
+      padding: 14px;
+      border: 2px dashed #444;
+      border-radius: 8px;
+      background: #101010;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 400;
+      text-align: center;
+      cursor: default;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      user-select: none;
     }
 
-    .file-picker input[type="file"] {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .folder-btn {
-      justify-self: unset;
-      min-height: 44px;
-      padding: 9px 14px;
-      background: #333;
-      font-size: 0.875rem;
-      font-weight: 600;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
-    .folder-btn:hover:not(:disabled) {
-      background: #444;
+    .drop-zone.drag-over {
+      border-color: var(--blue);
+      background: rgba(37, 99, 235, 0.08);
+      color: var(--text);
     }
 
     .file-count {
@@ -329,10 +327,6 @@
       .copy-btn {
         width: auto;
       }
-
-      .folder-btn {
-        width: auto;
-      }
     }
   </style>
 </head>
@@ -345,7 +339,7 @@
 
     <section>
       <h2>Register Evidence</h2>
-      <p>Upload one or more files (or a whole folder). The system zips multiple files into a single deterministic archive, generates a unique Case ID, and records its SHA-256 fingerprint.</p>
+      <p>Upload one file, select multiple files, or drag an entire folder. Multiple files are zipped into a deterministic archive before hashing.</p>
       <form id="register-form">
         <label>
           Case name
@@ -353,11 +347,8 @@
         </label>
         <label>
           Evidence file(s)
-          <div class="file-picker">
-            <input id="register-file" type="file" multiple>
-            <button type="button" class="folder-btn" id="register-folder-btn">Choose Folder</button>
-            <input id="register-folder-input" type="file" webkitdirectory style="display:none">
-          </div>
+          <input id="register-file" type="file" multiple>
+          <div class="drop-zone" id="register-drop-zone">Drag a folder or extra files here</div>
           <span id="register-file-count" class="file-count"></span>
         </label>
         <button id="register-button" type="submit">Register Evidence</button>
@@ -367,7 +358,7 @@
 
     <section>
       <h2>Verify Evidence</h2>
-      <p>Upload the original file(s) and enter the Case ID. If you registered multiple files, select the same files again — they will be re-zipped identically for comparison.</p>
+      <p>Upload the same file(s) used during registration and enter the Case ID. Multiple files are re-zipped identically for a byte-accurate comparison.</p>
       <form id="verify-form">
         <label>
           Case ID
@@ -375,11 +366,8 @@
         </label>
         <label>
           Evidence file(s)
-          <div class="file-picker">
-            <input id="verify-file" type="file" multiple>
-            <button type="button" class="folder-btn" id="verify-folder-btn">Choose Folder</button>
-            <input id="verify-folder-input" type="file" webkitdirectory style="display:none">
-          </div>
+          <input id="verify-file" type="file" multiple>
+          <div class="drop-zone" id="verify-drop-zone">Drag a folder or extra files here</div>
           <span id="verify-file-count" class="file-count"></span>
         </label>
         <button id="verify-button" type="submit">Verify Evidence</button>
@@ -389,15 +377,12 @@
 
     <section>
       <h2>Tamper Demo</h2>
-      <p>Upload any file (or multiple files) to corrupt it. Download the corrupted version, then submit it to Verify to see tamper detection in action.</p>
+      <p>Upload any file (or folder) to corrupt it. Download the result, then verify it against a registered Case ID to see tamper detection in action.</p>
       <form id="tamper-form">
         <label>
           File(s) to corrupt
-          <div class="file-picker">
-            <input id="tamper-file" type="file" multiple>
-            <button type="button" class="folder-btn" id="tamper-folder-btn">Choose Folder</button>
-            <input id="tamper-folder-input" type="file" webkitdirectory style="display:none">
-          </div>
+          <input id="tamper-file" type="file" multiple>
+          <div class="drop-zone" id="tamper-drop-zone">Drag a folder or extra files here</div>
           <span id="tamper-file-count" class="file-count"></span>
         </label>
         <button id="tamper-button" type="submit">Corrupt This File</button>
@@ -422,60 +407,140 @@
     const API_URL = "https://startup-suggest-name-1.onrender.com";
 
     // ---------------------------------------------------------------------------
-    // File picker state — tracks whichever input (files or folder) was last used
+    // File state — each section tracks {file, path} tuples so folder structure
+    // is preserved whether files come from the <input> or a drag-and-drop.
     // ---------------------------------------------------------------------------
 
     const fileState = { register: [], verify: [], tamper: [] };
 
-    function setupFilePicker(section) {
+    function setupSection(section) {
       const fileInput = document.getElementById(`${section}-file`);
-      const folderBtn = document.getElementById(`${section}-folder-btn`);
-      const folderInput = document.getElementById(`${section}-folder-input`);
+      const dropZone = document.getElementById(`${section}-drop-zone`);
       const countEl = document.getElementById(`${section}-file-count`);
 
-      folderBtn.addEventListener("click", () => folderInput.click());
-
-      function applyFiles(files) {
-        fileState[section] = [...files];
-        if (files.length === 0) {
+      function applyItems(items) {
+        fileState[section] = items;
+        if (items.length === 0) {
           countEl.textContent = "";
-        } else if (files.length === 1) {
-          countEl.textContent = files[0].webkitRelativePath || files[0].name;
+        } else if (items.length === 1) {
+          countEl.textContent = items[0].path;
         } else {
-          countEl.textContent = `${files.length} files selected`;
+          countEl.textContent = `${items.length} files selected`;
         }
       }
 
       fileInput.addEventListener("change", () => {
-        folderInput.value = "";
-        applyFiles(fileInput.files);
+        const items = [...fileInput.files].map(f => ({
+          file: f,
+          path: f.webkitRelativePath || f.name
+        }));
+        applyItems(items);
       });
 
-      folderInput.addEventListener("change", () => {
-        fileInput.value = "";
-        applyFiles(folderInput.files);
+      dropZone.addEventListener("dragover", e => {
+        e.preventDefault();
+        dropZone.classList.add("drag-over");
+      });
+
+      dropZone.addEventListener("dragleave", e => {
+        if (!dropZone.contains(e.relatedTarget)) {
+          dropZone.classList.remove("drag-over");
+        }
+      });
+
+      dropZone.addEventListener("drop", async e => {
+        e.preventDefault();
+        dropZone.classList.remove("drag-over");
+        dropZone.textContent = "Reading\u2026";
+        try {
+          const items = await readDroppedItems(e.dataTransfer);
+          applyItems(items);
+          dropZone.textContent = "Drag a folder or extra files here";
+        } catch {
+          dropZone.textContent = "Drag a folder or extra files here";
+        }
       });
     }
 
-    setupFilePicker("register");
-    setupFilePicker("verify");
-    setupFilePicker("tamper");
+    setupSection("register");
+    setupSection("verify");
+    setupSection("tamper");
+
+    // ---------------------------------------------------------------------------
+    // Drag-and-drop reader — recursively walks folder trees via the
+    // FileSystem API (webkitGetAsEntry). Falls back to plain File on browsers
+    // that do not support it.
+    // ---------------------------------------------------------------------------
+
+    async function readDroppedItems(dataTransfer) {
+      const results = [];
+      const dtItems = [...dataTransfer.items].filter(i => i.kind === "file");
+
+      for (const dtItem of dtItems) {
+        const entry = dtItem.webkitGetAsEntry?.();
+        if (entry) {
+          const entries = await readEntry(entry, "");
+          results.push(...entries);
+        } else {
+          const file = dtItem.getAsFile();
+          if (file) results.push({ file, path: file.name });
+        }
+      }
+      return results;
+    }
+
+    async function readEntry(entry, basePath) {
+      if (entry.isFile) {
+        return new Promise((resolve, reject) => {
+          entry.file(
+            file => resolve([{ file, path: basePath + entry.name }]),
+            reject
+          );
+        });
+      }
+
+      if (entry.isDirectory) {
+        const subEntries = await readAllDirEntries(entry.createReader());
+        const results = [];
+        for (const sub of subEntries) {
+          const subResults = await readEntry(sub, basePath + entry.name + "/");
+          results.push(...subResults);
+        }
+        return results;
+      }
+
+      return [];
+    }
+
+    function readAllDirEntries(reader) {
+      return new Promise((resolve, reject) => {
+        const all = [];
+        function read() {
+          reader.readEntries(batch => {
+            if (batch.length === 0) {
+              resolve(all);
+            } else {
+              all.push(...batch);
+              read();
+            }
+          }, reject);
+        }
+        read();
+      });
+    }
 
     // ---------------------------------------------------------------------------
     // Zip builder — single file passes through unchanged; multiple files are
-    // sorted by path, stored without compression, and given zero timestamps so
-    // the resulting archive is byte-for-byte deterministic across sessions.
+    // sorted by path, stored without compression, timestamped to epoch zero,
+    // producing a byte-for-byte identical archive across sessions.
     // ---------------------------------------------------------------------------
 
-    async function buildFilePayload(files) {
-      if (files.length === 1) return files[0];
+    async function buildFilePayload(items) {
+      if (items.length === 1) return items[0].file;
 
+      const sorted = [...items].sort((a, b) => a.path.localeCompare(b.path));
       const zip = new JSZip();
-      const sorted = [...files].sort((a, b) =>
-        (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)
-      );
-      for (const file of sorted) {
-        const path = file.webkitRelativePath || file.name;
+      for (const { file, path } of sorted) {
         zip.file(path, await file.arrayBuffer(), { compression: "STORE", date: new Date(0) });
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -496,8 +561,7 @@
     }
 
     function showResult(containerId, type, html) {
-      const container = document.getElementById(containerId);
-      container.innerHTML = `<div class="result ${type}">${html}</div>`;
+      document.getElementById(containerId).innerHTML = `<div class="result ${type}">${html}</div>`;
     }
 
     function clearResult(containerId) {
@@ -509,11 +573,8 @@
       const date = new Date(ts);
       if (Number.isNaN(date.getTime())) return ts;
       return date.toLocaleString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit"
+        year: "numeric", month: "short", day: "2-digit",
+        hour: "2-digit", minute: "2-digit"
       });
     }
 
@@ -557,45 +618,36 @@
         <div class="hash-block">
           <span class="hash-label">${escapeHtml(label)}</span>
           <code>${escapeHtml(value)}</code>
-        </div>
-      `;
+        </div>`;
     }
 
     // ---------------------------------------------------------------------------
     // Register
     // ---------------------------------------------------------------------------
 
-    document.getElementById("register-form").addEventListener("submit", async (event) => {
+    document.getElementById("register-form").addEventListener("submit", async event => {
       event.preventDefault();
       clearResult("register-result");
 
-      const files = fileState.register;
-      if (files.length === 0) {
-        showResult("register-result", "error", "<h3>Error</h3><p>Please select at least one file or folder.</p>");
+      const items = fileState.register;
+      if (items.length === 0) {
+        showResult("register-result", "error", "<h3>Error</h3><p>Please select at least one file or drag a folder onto the drop zone.</p>");
         return;
       }
 
-      const zipLabel = files.length > 1 ? `Zipping ${files.length} files\u2026` : "Registering\u2026";
+      const zipLabel = items.length > 1 ? `Zipping ${items.length} files\u2026` : "Registering\u2026";
       setLoading("register-button", true, zipLabel, "Register Evidence");
 
       try {
-        const payload = await buildFilePayload(files);
-        if (files.length > 1) {
-          setLoading("register-button", true, "Registering\u2026", "Register Evidence");
-        }
+        const payload = await buildFilePayload(items);
+        if (items.length > 1) setLoading("register-button", true, "Registering\u2026", "Register Evidence");
 
         const formData = new FormData();
         formData.append("case_name", document.getElementById("register-case-name").value);
         formData.append("file", payload);
 
-        const response = await fetch(`${API_URL}/evidence/register`, {
-          method: "POST",
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error(await parseError(response));
-        }
+        const response = await fetch(`${API_URL}/evidence/register`, { method: "POST", body: formData });
+        if (!response.ok) throw new Error(await parseError(response));
 
         const data = await response.json();
         showResult("register-result", "success", `
@@ -622,34 +674,29 @@
     // Verify
     // ---------------------------------------------------------------------------
 
-    document.getElementById("verify-form").addEventListener("submit", async (event) => {
+    document.getElementById("verify-form").addEventListener("submit", async event => {
       event.preventDefault();
       clearResult("verify-result");
 
-      const files = fileState.verify;
-      if (files.length === 0) {
-        showResult("verify-result", "error", "<h3>Error</h3><p>Please select at least one file or folder.</p>");
+      const items = fileState.verify;
+      if (items.length === 0) {
+        showResult("verify-result", "error", "<h3>Error</h3><p>Please select at least one file or drag a folder onto the drop zone.</p>");
         return;
       }
 
       const caseId = document.getElementById("verify-case-id").value;
-      const zipLabel = files.length > 1 ? `Zipping ${files.length} files\u2026` : "Verifying\u2026";
+      const zipLabel = items.length > 1 ? `Zipping ${items.length} files\u2026` : "Verifying\u2026";
       setLoading("verify-button", true, zipLabel, "Verify Evidence");
 
       try {
-        const payload = await buildFilePayload(files);
-        if (files.length > 1) {
-          setLoading("verify-button", true, "Verifying\u2026", "Verify Evidence");
-        }
+        const payload = await buildFilePayload(items);
+        if (items.length > 1) setLoading("verify-button", true, "Verifying\u2026", "Verify Evidence");
 
         const formData = new FormData();
         formData.append("case_id", caseId);
         formData.append("file", payload);
 
-        const response = await fetch(`${API_URL}/evidence/verify`, {
-          method: "POST",
-          body: formData
-        });
+        const response = await fetch(`${API_URL}/evidence/verify`, { method: "POST", body: formData });
 
         if (response.status === 404) {
           showResult("verify-result", "warning", `
@@ -659,9 +706,7 @@
           return;
         }
 
-        if (!response.ok) {
-          throw new Error(await parseError(response));
-        }
+        if (!response.ok) throw new Error(await parseError(response));
 
         const data = await response.json();
         if (data.status === "INTACT") {
@@ -694,36 +739,28 @@
     // Tamper
     // ---------------------------------------------------------------------------
 
-    document.getElementById("tamper-form").addEventListener("submit", async (event) => {
+    document.getElementById("tamper-form").addEventListener("submit", async event => {
       event.preventDefault();
       clearResult("tamper-result");
 
-      const files = fileState.tamper;
-      if (files.length === 0) {
-        showResult("tamper-result", "error", "<h3>Error</h3><p>Please select at least one file or folder.</p>");
+      const items = fileState.tamper;
+      if (items.length === 0) {
+        showResult("tamper-result", "error", "<h3>Error</h3><p>Please select at least one file or drag a folder onto the drop zone.</p>");
         return;
       }
 
-      const zipLabel = files.length > 1 ? `Zipping ${files.length} files\u2026` : "Corrupting\u2026";
+      const zipLabel = items.length > 1 ? `Zipping ${items.length} files\u2026` : "Corrupting\u2026";
       setLoading("tamper-button", true, zipLabel, "Corrupt This File");
 
       try {
-        const payload = await buildFilePayload(files);
-        if (files.length > 1) {
-          setLoading("tamper-button", true, "Corrupting\u2026", "Corrupt This File");
-        }
+        const payload = await buildFilePayload(items);
+        if (items.length > 1) setLoading("tamper-button", true, "Corrupting\u2026", "Corrupt This File");
 
         const formData = new FormData();
         formData.append("file", payload);
 
-        const response = await fetch(`${API_URL}/evidence/tamper`, {
-          method: "POST",
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error(await parseError(response));
-        }
+        const response = await fetch(`${API_URL}/evidence/tamper`, { method: "POST", body: formData });
+        if (!response.ok) throw new Error(await parseError(response));
 
         const originalHash = response.headers.get("X-Original-Hash");
         const tamperedHash = response.headers.get("X-Tampered-Hash");
@@ -764,9 +801,7 @@
 
       try {
         const response = await fetch(`${API_URL}/evidence/list`);
-        if (!response.ok) {
-          throw new Error(await parseError(response));
-        }
+        if (!response.ok) throw new Error(await parseError(response));
 
         const data = await response.json();
         document.getElementById("list-total").textContent = `Total records: ${data.total}`;
@@ -776,7 +811,7 @@
           return;
         }
 
-        const rows = data.records.map((record) => `
+        const rows = data.records.map(record => `
           <tr>
             <td>${escapeHtml(record.case_id)}</td>
             <td>${escapeHtml(record.original_filename)}</td>
@@ -787,11 +822,7 @@
         document.getElementById("list-result").innerHTML = `
           <table>
             <thead>
-              <tr>
-                <th>Case ID</th>
-                <th>Filename</th>
-                <th>Registered At</th>
-              </tr>
+              <tr><th>Case ID</th><th>Filename</th><th>Registered At</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -807,7 +838,7 @@
     // Copy button (event delegation)
     // ---------------------------------------------------------------------------
 
-    document.body.addEventListener("click", async (event) => {
+    document.body.addEventListener("click", async event => {
       const button = event.target.closest("[data-copy]");
       if (!button) return;
       await copyText(button.getAttribute("data-copy"));
